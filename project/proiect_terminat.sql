@@ -336,6 +336,49 @@ BEGIN
     UPDATE ECHIPA SET DATA_INFIINTARE = '01-01-1990' WHERE ECHIPA.TEAM_ID < 3;
 END;
 
+-- exercitiul 11 trigger 2
+-- Creati un trigger care sa se declanseze in momentul in care se incearca atribuirea
+-- sumei sponsorizate a unui sponsor cu o suma de 5 ori mai mare decat cea mai mica suma
+CREATE OR REPLACE TRIGGER trigger_sponsor
+    FOR UPDATE OR INSERT ON SPONSOR
+    COMPOUND TRIGGER
+    TYPE r_sponsor IS RECORD (
+        sponsor_id NUMBER,
+        suma_sponsorizata NUMBER,
+        nume_sponsor VARCHAR2(30)
+    );
+    TYPE t_sponsor IS TABLE OF r_sponsor INDEX BY PLS_INTEGER;
+    tabel_sponsor t_sponsor;
+    counter NUMBER := 1;
+    AFTER EACH ROW IS
+    BEGIN
+        tabel_sponsor(counter).sponsor_id := :OLD.SPONSOR_ID;
+        tabel_sponsor(counter).suma_sponsorizata := :OLD.SUMA_SPONSORIZATA;
+        tabel_sponsor(counter).nume_sponsor := :OLD.NUME_SPONSOR;
+        counter := counter + 1;
+    END AFTER EACH ROW;
+
+    AFTER STATEMENT IS
+        suma_max NUMBER;
+    BEGIN
+        SELECT MIN(suma_sponsorizata) * 5 INTO suma_max FROM SPONSOR;
+        FOR i IN 1..tabel_sponsor.COUNT LOOP
+            IF tabel_sponsor(i).suma_sponsorizata > suma_max THEN
+                UPDATE SPONSOR
+                SET SUMA_SPONSORIZATA = suma_max
+                WHERE SPONSOR_ID = tabel_sponsor(i).sponsor_id;
+            END IF;
+        END LOOP;
+    END AFTER STATEMENT;
+END;
+-- declansarea triggerului
+SELECT * FROM SPONSOR;
+BEGIN
+    UPDATE SPONSOR SET SUMA_SPONSORIZATA = 10000 WHERE SPONSOR_ID > 2;
+--     ROLLBACK;
+END;
+DROP TRIGGER trigger_sponsor;
+SELECT * FROM SPONSOR;
 -- exercitiul 12
 -- Creati un trigger care sa permita modificarea schemei doar de utilizatorul alex
 -- si salvati modificarile facute asupra schemei intr-un tabel
@@ -650,3 +693,168 @@ BEGIN
     proiect_axp.get_field_with_most_capacity('ale32');
     proiect_axp.get_field_with_most_capacity('');
 end;
+-- exercitiul 14
+-- Definiti un pachet care sa includa tipuri de date complexe si obiecte necesare
+-- pentru actiuni integrate
+-- Pachetul contine functii si proceduri care permit, fiind date ca parametri
+-- numele unui arbitru, comentator si jucator, afisarea tuturor meciurilor in care
+-- au participat, respectiv au comentat, respectiv au jucat persoanele respective
+-- si a echipelor care au jucat in acele meciuri
+CREATE OR REPLACE PACKAGE proiect_ex14 AS
+    TYPE tip_meci IS TABLE OF MECI.match_id%TYPE;
+    TYPE tip_echipa is varray(2) of ECHIPA%ROWTYPE;
+
+    FUNCTION get_referee(p_nume_arbitru IN VARCHAR2) RETURN ARBITRU.referee_id%type;
+    FUNCTION get_commentator(p_nume_comentator IN VARCHAR2) RETURN COMENTATOR.commentator_id%type;
+    FUNCTION get_player(p_nume_jucator IN VARCHAR2) RETURN JUCATOR.player_id%type;
+    PROCEDURE get_matches(p_nume_arbitru IN VARCHAR2, p_nume_comentator IN VARCHAR2, p_nume_jucator IN VARCHAR2);
+    PROCEDURE print_match_and_teams(p_match_id IN NUMBER, v_echipe IN tip_echipa);
+END proiect_ex14;
+CREATE OR REPLACE PACKAGE BODY proiect_ex14 AS
+    PROCEDURE print_match_and_teams(p_match_id IN NUMBER, v_echipe IN tip_echipa) AS
+        v_meci MECI%rowtype;
+    BEGIN
+        SELECT * INTO v_meci FROM MECI WHERE MATCH_ID = p_match_id;
+
+        DBMS_OUTPUT.PUT_LINE('Meciul a inceput la ora ' || v_meci.ORA_INCEPUT || ' si a avut un numar de ' || v_meci.SPECTATORI || ' spectatori.');
+
+        DBMS_OUTPUT.PUT_LINE('Meciul a avut loc intre echipele: ' || v_echipe(1).NUME_ECHIPA || ' si ' || v_echipe(2).NUME_ECHIPA);
+    END print_match_and_teams;
+
+    FUNCTION get_referee(p_nume_arbitru IN VARCHAR2) RETURN ARBITRU.referee_id%type AS
+        v_id ARBITRU.referee_id%type;
+        cnt NUMBER;
+    BEGIN
+        SELECT COUNT(REFEREE_ID) INTO cnt FROM ARBITRU WHERE UPPER(NUME) LIKE '%' || UPPER(p_nume_arbitru) || '%';
+        IF cnt = 0 THEN
+            raise no_data_found;
+        ELSIF cnt > 1 THEN
+            raise too_many_rows;
+        ELSE
+            SELECT REFEREE_ID INTO v_id FROM ARBITRU WHERE UPPER(NUME) LIKE '%' || UPPER(p_nume_arbitru) || '%';
+        END IF;
+
+        RETURN v_id;
+
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                DBMS_OUTPUT.PUT_LINE('Nu exista niciun arbitru cu numele ' || p_nume_arbitru);
+                RETURN -1;
+            WHEN TOO_MANY_ROWS THEN
+                DBMS_OUTPUT.PUT_LINE('Exista mai mult de un arbitru cu numele ' || p_nume_arbitru);
+                RETURN -1;
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Alta eroare!');
+                RETURN -1;
+
+    end get_referee;
+
+    FUNCTION get_commentator(p_nume_comentator IN VARCHAR2) RETURN COMENTATOR.commentator_id%type AS
+        v_id COMENTATOR.commentator_id%type;
+        cnt NUMBER;
+    BEGIN
+        SELECT COUNT(COMMENTATOR_ID) INTO cnt FROM COMENTATOR WHERE UPPER(NUME) LIKE '%' || UPPER(p_nume_comentator) || '%';
+        IF cnt = 0 THEN
+            raise no_data_found;
+        ELSIF cnt > 1 THEN
+            raise too_many_rows;
+        ELSE
+            SELECT COMMENTATOR_ID INTO v_id FROM COMENTATOR WHERE UPPER(NUME) LIKE '%' || UPPER(p_nume_comentator) || '%';
+        END IF;
+
+        RETURN v_id;
+
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                DBMS_OUTPUT.PUT_LINE('Nu exista niciun comentator cu numele ' || p_nume_comentator);
+                RETURN -1;
+            WHEN TOO_MANY_ROWS THEN
+                DBMS_OUTPUT.PUT_LINE('Exista mai mult de un comentator cu numele ' || p_nume_comentator);
+                RETURN -1;
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Alta eroare!');
+                RETURN -1;
+    end get_commentator;
+
+    FUNCTION get_player(p_nume_jucator IN VARCHAR2) RETURN JUCATOR.player_id%type AS
+        v_id JUCATOR.player_id%type;
+        cnt NUMBER;
+    BEGIN
+        SELECT COUNT(PLAYER_ID) INTO cnt FROM JUCATOR WHERE UPPER(NUME_PRENUME) LIKE '%' || UPPER(p_nume_jucator) || '%';
+        IF cnt = 0 THEN
+            raise no_data_found;
+        ELSIF cnt > 1 THEN
+            raise too_many_rows;
+        ELSE
+            SELECT PLAYER_ID INTO v_id FROM JUCATOR WHERE UPPER(NUME_PRENUME) LIKE '%' || UPPER(p_nume_jucator) || '%';
+        END IF;
+
+        RETURN v_id;
+
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                DBMS_OUTPUT.PUT_LINE('Nu exista niciun jucator cu numele ' || p_nume_jucator);
+                RETURN -1;
+            WHEN TOO_MANY_ROWS THEN
+                DBMS_OUTPUT.PUT_LINE('Exista mai mult de un jucator cu numele ' || p_nume_jucator);
+                RETURN -1;
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Alta eroare!');
+                RETURN -1;
+    end get_player;
+
+    PROCEDURE get_matches(p_nume_arbitru IN VARCHAR2, p_nume_comentator IN VARCHAR2, p_nume_jucator IN VARCHAR2) AS
+        v_id_arbitru ARBITRU.referee_id%type;
+        v_id_comentator COMENTATOR.commentator_id%type;
+        v_id_jucator JUCATOR.player_id%type;
+        v_id_echipa ECHIPA.team_id%type;
+        v_meciuri tip_meci;
+        v_echipe tip_echipa;
+        i NUMBER;
+    BEGIN
+        v_id_arbitru := get_referee(p_nume_arbitru);
+        v_id_comentator := get_commentator(p_nume_comentator);
+        v_id_jucator := get_player(p_nume_jucator);
+
+        IF v_id_arbitru = -1 OR v_id_comentator = -1 OR v_id_jucator = -1 THEN
+            RETURN;
+        END IF;
+
+        SELECT ECHIPA.TEAM_ID INTO v_id_echipa
+        FROM ECHIPA
+        JOIN JUCATOR ON ECHIPA.TEAM_ID = JUCATOR.TEAM_ID
+        WHERE JUCATOR.PLAYER_ID = v_id_jucator;
+
+        IF v_id_echipa IS NULL THEN
+            DBMS_OUTPUT.PUT_LINE('Jucatorul ' || p_nume_jucator || ' nu face parte din nici o echipa!');
+            RETURN;
+        END IF;
+
+        SELECT J.MATCH_ID
+        BULK COLLECT INTO v_meciuri
+        FROM JOACA J
+        JOIN MECI on MECI.MATCH_ID = J.MATCH_ID
+        WHERE REFEREE_ID = v_id_arbitru AND COMMENTATOR_ID = v_id_comentator
+        AND J.TEAM_ID = v_id_echipa;
+
+        FOR i IN 1..v_meciuri.COUNT LOOP
+            SELECT E.*
+            BULK COLLECT INTO v_echipe
+            FROM JOACA J
+            JOIN ECHIPA E ON E.TEAM_ID = J.TEAM_ID
+            WHERE J.MATCH_ID = v_meciuri(i);
+
+            print_match_and_teams(v_meciuri(i), v_echipe);
+
+        END LOOP;
+    END get_matches;
+
+END;
+/
+-- testare pachet
+BEGIN
+    proiect_ex14.get_matches('Cristian','Alexandru','Alex');
+    DBMS_OUTPUT.PUT_LINE('-----------------');
+    proiect_ex14.get_matches('Mihai', 'Mihai', 'Mihai');
+    DBMS_OUTPUT.PUT_LINE('-----------------');
+END;
